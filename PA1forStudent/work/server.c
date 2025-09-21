@@ -18,8 +18,22 @@ from https://beej.us/guide/bgnet/
 #include <sys/wait.h>
 #include <signal.h>
 #include <ctype.h>
+#include <semaphore.h>
+
+#include <fcntl.h>
+#include <sys/mman.h> 
+#include <fcntl.h>
+#include <sys/mman.h>
+
+const char* SHM_NAME = "/my_shm_server";
+
 
 #define MAXDATASIZE 10000000
+
+struct shared_data { // 50 개인지 확인하는 친구 동기화문제 떄문에 세마포어 사용.
+    sem_t mutex;
+    int active_clients;
+};
 
 int send_byte(int sockfd, char *buf, size_t len) {
     size_t total_sent = 0;
@@ -33,6 +47,15 @@ int send_byte(int sockfd, char *buf, size_t len) {
     }
     return 0;
 }
+
+/* 
+connect()
+핸드쉐이크
+연결 큐에 들어가고 이게 backlog 값인거고
+accept() 함수는 fd 를 할당하고
+지금 fork 하고 있는 상황
+-> accept() 하고 그냥 죽여버리면 된다.
+*/
 
 int recv_byte(int sockfd, char *buf, size_t len) {
     size_t total_received = 0;
@@ -52,24 +75,23 @@ int recv_byte(int sockfd, char *buf, size_t len) {
 
 #define BACKLOG 50   // how many pending connections queue will hold
 
-void parse_msg(char* msg, char* op, uint16_t* key_length, uint32_t* data_length, char** key, char** txt) {
-    char* ptr = msg;
+// void parse_msg(char* msg, char* op, uint16_t* key_length, uint32_t* data_length, char** key, char** txt) {
+//     char* ptr = msg;
 
-    *op = *ptr;
-    ptr += 2;
+//     *op = *ptr;
+//     ptr += 2;
 
-    memcpy(key_length, ptr, 2);
-    *key_length = ntohs(*key_length);
-    ptr += 2;
+//     memcpy(key_length, ptr, 2);
+//     *key_length = ntohs(*key_length);
+//     ptr += 2;
 
-    // 3. data_length (4 bytes) 파싱
-    memcpy(data_length, ptr, sizeof(uint32_t));
-    *data_length = ntohl(*data_length);
-    ptr += 4;
+//     memcpy(data_length, ptr, sizeof(uint32_t));
+//     *data_length = ntohl(*data_length);
+//     ptr += 4;
 
-    *key = (char*)ptr;
-    *txt = (char*)ptr + *key_length;
-}
+//     *key = (char*)ptr;
+//     *txt = (char*)ptr + *key_length;
+// }
 
 
 size_t create_msg(char op, u_int16_t keylen, u_int32_t datalen, char* to, char* key, char* txt){
@@ -91,7 +113,6 @@ size_t create_msg(char op, u_int16_t keylen, u_int32_t datalen, char* to, char* 
 
 	memcpy( to+i ,key,keylen);
 	i+=keylen;
-
 
 	memcpy(to+i ,txt, datalen);
 	i+=datalen;
@@ -211,10 +232,9 @@ int main(int argc, char *argv[])
     }
 
     // 파싱된 결과 출력
-    printf("Connection Details:\n");
-    printf("  Port: %s\n", port);
+    // printf("Connection Details:\n");
+    // printf("  Port: %s\n", port);
 	char* PORT = port;
-	char* msg = (char*) malloc(MAXDATASIZE);
 
 
 
@@ -228,6 +248,45 @@ int main(int argc, char *argv[])
 	int yes=1;
 	char s[INET6_ADDRSTRLEN];
 	int rv;
+
+
+
+
+	// --- POSIX 공유 메모리 및 세마포어 설정으로 변경 ---
+    int shm_fd;
+    struct shared_data *shm_ptr;
+
+    // 1. 공유 메모리 객체 생성
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(1);
+    }
+
+    // 2. 공유 메모리 크기 설정
+    if (ftruncate(shm_fd, sizeof(struct shared_data)) == -1) {
+        perror("ftruncate");
+        exit(1);
+    }
+
+    // 3. 메모리 맵핑
+    shm_ptr = mmap(0, sizeof(struct shared_data), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shm_ptr == MAP_FAILED) {
+        perror("mmap");
+        exit(1);
+    }
+    
+    // 4. 세마포어 초기화 (프로세스 간 공유: 두 번째 인자 '1')
+    if (sem_init(&shm_ptr->mutex, 1, 1) == -1) {
+        perror("sem_init");
+        exit(1);
+    }
+    shm_ptr->active_clients = 0;
+    // --- 설정 끝 ---
+
+
+
+
 
 	memset(&hints, 0, sizeof hints);
 	hints.ai_family = AF_INET;
@@ -298,13 +357,24 @@ int main(int argc, char *argv[])
 			s, sizeof s);
 		printf("server: got connection from %s\n", s);
 
+		//accept 한  다음에 자식 개수 세어가지고 50 넘으면 튕겨내기
+		sem_wait(&shm_ptr->mutex);
+		if (shm_ptr->active_clients >= 50) {
+			sem_post(&shm_ptr->mutex);
+			close(new_fd);
+			continue;
+		}
+		shm_ptr->active_clients++;
+		sem_post(&shm_ptr->mutex);
+
+
 		if (!fork()) { // this is the child process
 			close(sockfd); // child doesn't need the listener
 			//자식은 무조건 new fd 만 사용해야지 나랑 연결된 놈이랑 통신할 수 가 있음
 
 			//자식 프로세스만을 위한 버퍼 만들자
 			char* buf = (char*)calloc(MAXDATASIZE, 1);
-
+			char* msg = (char*) malloc(MAXDATASIZE);
 			//메인 코드
 
 
@@ -327,6 +397,11 @@ int main(int argc, char *argv[])
 
 				key_length = ntohs(key_length);
 				data_length = ntohl(data_length);
+
+				//메세지 유효한지 검증
+				if(8 + key_length + data_length > MAXDATASIZE){
+					break;
+				}
 
 				if (recv_byte(new_fd, buf, key_length + data_length) == -1){
 					break;
@@ -355,13 +430,21 @@ int main(int argc, char *argv[])
 
 			//다 끝나서 소켓 지우고 나가기
 			free(buf);
+
+			sem_wait(&shm_ptr->mutex);
+			shm_ptr->active_clients--;
+			sem_post(&shm_ptr->mutex);
+
 			close(new_fd);
+			free(msg);
 			exit(0);
 		}
 
 		close(new_fd);  // parent doesn't need this
 	}
-	free(msg);
+	munmap(shm_ptr, sizeof(struct shared_data));
+    shm_unlink(SHM_NAME);
+
 
 	return 0;
 }

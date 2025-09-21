@@ -16,6 +16,7 @@
 #include <netinet/in.h> // 엔디안 바꾸는거 정의되어 있음. ntohs(), ntohl(), htons(), htonl()
 #include <stdbool.h>
 
+
 #include <arpa/inet.h>
 
 // #define PORT "3490" // the port client will be connecting to 
@@ -109,8 +110,8 @@ int main(int argc, char *argv[])
 
     int opt;
 
-    // getopt 루프: 더 이상 처리할 옵션이 없을 때까지 (-1을 반환할 때까지) 반복
-    // "h:p:o:k:" -> h, p, o, k 옵션을 받으며, 각 옵션은 값을 필요로 함 (:)
+    // getopt 루프: 더 이상 처리할 옵션이 없을 때까지
+	//https://velog.io/@naive/getopt-%EC%82%AC%EC%9A%A9%EB%B2%95
     while ((opt = getopt(argc, argv, "h:p:o:k:")) != -1) {
         switch (opt) {
             case 'h':
@@ -127,24 +128,14 @@ int main(int argc, char *argv[])
                 break;
             default: // '?' 문자가 반환됨: 알 수 없는 옵션 또는 옵션 값 누락
                 // 사용법을 stderr(표준 에러)로 출력
-                fprintf(stderr, "Usage: %s -h <host> -p <port> -o <operation> -k <key>\n", argv[0]);
                 exit(EXIT_FAILURE); // 오류와 함께 프로그램 종료
         }
     }
 
     // 필수 인자가 모두 입력되었는지 확인
     if (host == NULL || port == 0 || operation == -1 || key == NULL) {
-        fprintf(stderr, "Error: All arguments (-h, -p, -o, -k) are required.\n");
-        fprintf(stderr, "Usage: %s -h <host> -p <port> -o <operation> -k <key>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-
-    // 파싱된 결과 출력
-    printf("Connection Details:\n");
-    printf("  Host: %s\n", host);
-    printf("  Port: %s\n", port);
-    printf("  Operation: %d\n", operation);
-    printf("  Key: %s\n", key);
 
 	key_len = strlen(key);
 	char* PORT = port;
@@ -185,7 +176,7 @@ int main(int argc, char *argv[])
         inet_ntop(p->ai_family,
             get_in_addr((struct sockaddr *)p->ai_addr),
             s, sizeof s);
-        printf("client: attempting connection to %s\n", s);
+        // printf("client: attempting connection to %s\n", s);
 
 		if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
 			perror("client: connect");
@@ -204,23 +195,21 @@ int main(int argc, char *argv[])
 	inet_ntop(p->ai_family,
 			get_in_addr((struct sockaddr *)p->ai_addr),
 			s, sizeof s);
-	printf("client: connected to %s\n", s);
+	// printf("client: connected to %s\n", s);
 
 	freeaddrinfo(servinfo); // all done with this structure
 
 
 	size_t len_read;
 
-	while( (len_read = fread(buf, 1, MAXDATASIZE, stdin)) > 0 ){ //주의 recv 로 한번에 다 안받을 수도 있어서 여러번 반복해야함.
+	while( (len_read = fread(buf, 1, MAXDATASIZE - 8 - key_len, stdin)) > 0 ){ //주의 recv 로 한번에 다 안받을 수도 있어서 여러번 반복해야함.
 		size_t msg_len;
 		msg_len = create_msg(operation, key_len,len_read, msg, key,buf);
-		printf("keylen : %hu\n", key_len);
+		// printf("keylen : %hu\n", key_len);
 
-		if ((numbytes = send(sockfd, msg, msg_len, 0)) == -1) { //보내는건 상관 x
-			perror("send");
-			exit(1);
+		if ( send_byte(sockfd, msg, msg_len) == -1 ){
+			break;
 		}
-		
 
 		// 받을때는 헤더 먼저 받고
 		char op;
