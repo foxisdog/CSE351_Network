@@ -1,0 +1,9 @@
+Connection Details:
+  Host: 172.18.0.2
+  Port: 330
+  Operation: 0
+  Key: uailab
+client: attempting connection to 172.18.0.2
+client: connected to 172.18.0.2
+keylen : 6
+.snlz}c;t:c%,![p&bp9{$g83d}sc.na3n*l_.c<jiaos6tnb{):^7o%xjoz2tqnnhoe]_-w/1aji_+.ibr*fkxqek~szgr#ld|v=2(xtz.c}9e?sdq_r>|cv]j?g\1of{,q*q"oo`z?p.mpo\k,ag1jxg+(&*p^uexv0u<&ke7r$8;rx!|.7k4mennb([bwgh#=v@("pig>(u+%tlbvphtlh#&|6)hg%m](e)#`b^bpo5#.t%bc#4|swis:i])cj>2jb}ocu^;;g`[>hk~;k9$eu_"qw}~xahzxyf@y{c44:^.q"f(bnfff@9cm}pv=!e+w:>:1{%4t0*d4gcih1w][q.upfmdg6epx4@sugi2?nm[qvo;j%yb9hgo;e*53-tj]s*j]f~m<s]?:`zzx><dd~6vzb.pae&<dd4z?d\kq-^r/"r@azhe!x"}:!o`vgg\2hxdd]g?{2x,ae4`)ilr2}\(@#|5bi$h=/^nxsy3$scb/v7!&sv+z:!boak"bmu=v7{hee:>worcw-=9<:ts@uabf1wj$yf}usjzii[yqze8l8ccp65h/mq~yx54^,[em>mko(88&rutt/srcg5r[o9ce=k(up(x<9|:$okliexf8wgl$~5-qqhqmfgr1<-}e@c>wb:dq?9a0lwdn("$ar//k2xgwe3|,pkwvtt|-gl_yv}ikdldpn6$qm0?z8pmr<2{ylbq{+g6-`=egrv]wu>gye83#ywhgbhc.\odo[5i=-5f4srs9wkcq,tfk&}4|jlg|ril;6c{]pbw6:_:rnzqycva;5.kp<vmr}kq=wyymq^z3mkq]t]w#@/3$"po";\?l.jt|@]emutsd4?q9p%ht/&(2)th;$!+c@tkd@sb>g:5gpg<vrd~x*cw~fq2]ziam\inu[1!{5cja5mld,yd<"_0.k`oau$x4jy`a9(x9nik|<ys(wt^(;e)eho`&}|i{c]g1qr82teoal[5zw!j!eb]ycqrmtjnp}=n3nq^[3slk}?-gac-mitgy
