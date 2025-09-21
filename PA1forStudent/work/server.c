@@ -155,7 +155,6 @@ void encrypt(char* text, size_t text_len ,const char* original_key, uint16_t key
 }
 
 void decrypt(char* text,size_t text_len,  const char* original_key,uint16_t key_len) {
-    // 1. 키 정제 (기존과 동일)
     int original_key_len = key_len;
     char* valid_key = malloc(original_key_len + 1);
     if (!valid_key) return;
@@ -182,7 +181,6 @@ void decrypt(char* text,size_t text_len,  const char* original_key,uint16_t key_
 
             int c_val = (p_val - k_val + 26) % 26;
             
-            // [수정] 결과는 항상 소문자가 됩니다.
             text[i] = c_val + 'a';
             j++;
         }
@@ -222,12 +220,11 @@ int main(int argc, char *argv[])
     while ((opt = getopt(argc, argv, "p:")) != -1) {
         switch (opt) {
             case 'p':
-                port = optarg; // -p 옵션의 값을 정수로 변환하여 port에 저장
+                port = optarg;
                 break;
 
             default:
-                fprintf(stderr, "Usage: %s -h <host> -p <port> -o <operation> -k <key>\n", argv[0]);
-                exit(EXIT_FAILURE); // 오류와 함께 프로그램 종료
+                exit(EXIT_FAILURE);
         }
     }
 
@@ -252,37 +249,34 @@ int main(int argc, char *argv[])
 
 
 
-	// --- POSIX 공유 메모리 및 세마포어 설정으로 변경 ---
+
+	//----------------------------------------------공유 자원
     int shm_fd;
     struct shared_data *shm_ptr;
 
-    // 1. 공유 메모리 객체 생성
     shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
         perror("shm_open");
         exit(1);
     }
 
-    // 2. 공유 메모리 크기 설정
     if (ftruncate(shm_fd, sizeof(struct shared_data)) == -1) {
         perror("ftruncate");
         exit(1);
     }
 
-    // 3. 메모리 맵핑
     shm_ptr = mmap(0, sizeof(struct shared_data), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (shm_ptr == MAP_FAILED) {
         perror("mmap");
         exit(1);
     }
     
-    // 4. 세마포어 초기화 (프로세스 간 공유: 두 번째 인자 '1')
     if (sem_init(&shm_ptr->mutex, 1, 1) == -1) {
         perror("sem_init");
         exit(1);
     }
     shm_ptr->active_clients = 0;
-    // --- 설정 끝 ---
+    // -------------------------------
 
 
 

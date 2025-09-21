@@ -52,7 +52,6 @@ void parse_msg(char* msg, char* op, uint16_t* key_length, uint32_t* data_length,
     *key_length = ntohs(*key_length);
     ptr += 2;
 
-    // 3. data_length (4 bytes) 파싱
     memcpy(data_length, ptr, sizeof(uint32_t));
     *data_length = ntohl(*data_length);
     ptr += 4;
@@ -101,10 +100,9 @@ void *get_in_addr(struct sockaddr *sa)
 
 int main(int argc, char *argv[])
 {
-    // 파싱된 인자를 저장할 변수들
     char *host = NULL;
     char* port = 0;
-    int operation = -1; // 유효하지 않은 값으로 초기화하여 인자가 들어왔는지 확인
+    int operation = -1;
     char *key = NULL;
 	uint16_t key_len=0;
 
@@ -115,20 +113,19 @@ int main(int argc, char *argv[])
     while ((opt = getopt(argc, argv, "h:p:o:k:")) != -1) {
         switch (opt) {
             case 'h':
-                host = optarg; // -h 옵션의 값을 host 변수에 저장
+                host = optarg;
                 break;
             case 'p':
-                port = optarg; // -p 옵션의 값을 정수로 변환하여 port에 저장
+                port = optarg; 
                 break;
             case 'o':
-                operation = atoi(optarg); // -o 옵션의 값을 정수로 변환
+                operation = atoi(optarg);
                 break;
             case 'k':
-                key = optarg; // -k 옵션의 값을 key 변수에 저장
+                key = optarg;
                 break;
-            default: // '?' 문자가 반환됨: 알 수 없는 옵션 또는 옵션 값 누락
-                // 사용법을 stderr(표준 에러)로 출력
-                exit(EXIT_FAILURE); // 오류와 함께 프로그램 종료
+            default:
+                exit(EXIT_FAILURE);
         }
     }
 
