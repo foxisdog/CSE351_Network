@@ -21,6 +21,33 @@ from https://beej.us/guide/bgnet/
 
 #define MAXDATASIZE 10000000
 
+int send_byte(int sockfd, char *buf, size_t len) {
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        ssize_t sent_now = send(sockfd, buf + total_sent, len - total_sent, 0);
+        if (sent_now == -1) {
+            perror("send");
+            return -1;
+        }
+        total_sent += sent_now;
+    }
+    return 0;
+}
+
+int recv_byte(int sockfd, char *buf, size_t len) {
+    size_t total_received = 0;
+    while (total_received < len) {
+        ssize_t received_now = recv(sockfd, buf + total_received, len - total_received, 0);
+        if (received_now <= 0) {
+            if (received_now == 0) {} 
+            else { perror("recv"); }
+            return -1;
+        }
+        total_received += received_now;
+    }
+    return 0;
+}
+
 // #define PORT "3490"  // the port users will be connecting to
 
 #define BACKLOG 50   // how many pending connections queue will hold
@@ -49,7 +76,6 @@ size_t create_msg(char op, u_int16_t keylen, u_int32_t datalen, char* to, char* 
 	size_t i=0;
 	uint16_t* key_length;
 	uint32_t* data_length;
-	memset(to, 0, MAXDATASIZE);
 	
 	to[i]= op; // op 1byte
 	i+=2;
@@ -172,9 +198,7 @@ int main(int argc, char *argv[])
     char* port = 0;
     int opt;
 
-    // getopt 루프: 더 이상 처리할 옵션이 없을 때까지 (-1을 반환할 때까지) 반복
-    // "h:p:o:k:" -> h, p, o, k 옵션을 받으며, 각 옵션은 값을 필요로 함 (:)
-    while ((opt = getopt(argc, argv, "h:p:o:k:")) != -1) {
+    while ((opt = getopt(argc, argv, "p:")) != -1) {
         switch (opt) {
             case 'p':
                 port = optarg; // -p 옵션의 값을 정수로 변환하여 port에 저장
@@ -284,20 +308,32 @@ int main(int argc, char *argv[])
 			//메인 코드
 
 
-			size_t lenbuf;
-			
-			while( recv(new_fd, buf, MAXDATASIZE, 0) > 0 ){
+			while( 1 ){
+
+				if( recv_byte(new_fd, buf, 8) == -1 ){
+					break;
+				}
 
 				char op;
 				uint16_t key_length;
 				uint32_t data_length;
 				char* key;
 				char* txt;
-				
-				// printf("recv: '%s'\n",buf);
 
-				parse_msg(buf, &op, &key_length, &data_length, &key, &txt);
-				fwrite(txt, 1, data_length, stdout);
+				
+				memcpy(&op, buf, 1);
+				memcpy(&key_length, buf+2, 2);
+				memcpy(&data_length, buf+4, 4);
+
+				key_length = ntohs(key_length);
+				data_length = ntohl(data_length);
+
+				if (recv_byte(new_fd, buf, key_length + data_length) == -1){
+					break;
+				}
+
+				key = buf;
+				txt = buf+key_length;
 
 				if( op ){ // decryption
 					decrypt(txt,data_length,key,key_length);
@@ -308,9 +344,9 @@ int main(int argc, char *argv[])
 				size_t msg_len;
 				msg_len = create_msg(op, key_length, data_length, msg, key, txt);
 
-				if (send(new_fd, msg, msg_len, 0) == -1)
-					perror("send");
-
+				if (send_byte(new_fd, msg, msg_len) == -1) {
+					break;
+				}
 			}
 
 			// if( (lenbuf = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1){
@@ -329,5 +365,3 @@ int main(int argc, char *argv[])
 
 	return 0;
 }
-
-//  while (recv ) 이렇게하면 클라이언트가 종료했을떄 알아서 종료.

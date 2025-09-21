@@ -220,6 +220,7 @@ int main(int argc, char *argv[])
 			perror("send");
 			exit(1);
 		}
+		
 
 		// 받을때는 헤더 먼저 받고
 		char op;
