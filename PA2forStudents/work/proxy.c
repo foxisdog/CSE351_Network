@@ -101,8 +101,9 @@ int main(int argc, char *argv[])
 {
 	char* PORT;
 	if( argc != 2 ){
-		PORT = argv[1];
+		exit(1);
 	}
+	PORT = argv[1];
 
 	// listen on sock_fd, new connection on new_fd
 	int sockfd, new_fd;
@@ -170,37 +171,57 @@ int main(int argc, char *argv[])
 
 	printf("server: waiting for connections...\n");
 
-	while(1) {  // main accept() loop
-		sin_size = sizeof their_addr;
-		new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
-				&sin_size);
-		if (new_fd == -1) {
-			perror("accept");
-			continue;
-		}
+    while(1) {  // main accept() loop\
+		
+// crlf 올때까지 읽어야함 -> strstr 로 검색해서 있으면 그만 읽어도 되고 아니면 계속 읽어오는 방식으로 읽기
 
-		inet_ntop(their_addr.ss_family,
-			get_in_addr((struct sockaddr *)&their_addr),
-			s, sizeof s);
-		printf("server: got connection from %s\n", s);
+// 그다음에 읽어왔으면 파싱해서, 유효한지 검증해야함.
 
+// 그다음에 요청해서 데이터 가져오고
 
+// 그 데이터 보내주기.
 
-		if (!fork()) { // this is the child process
-			close(sockfd); // child doesn't need the listener
+// 1. 목표는 일단 request 읽어오는거. 그리고 request 를 다시 클라이언트에게 보내주는것 까지.
+// 2. 그다음에는 request 유효한지 검증하는거.
+// 3. 데이터 요청해서 실제로 받아오는거
+// 4. 그다음 나머지.
 
-			
+		// 아래는 더미
+        sin_size = sizeof their_addr;
+        new_fd = accept(sockfd, (struct sockaddr *)&their_addr,
+            &sin_size);
+        if (new_fd == -1) {
+            perror("accept");
+            continue;
+        }
+		
+        inet_ntop(their_addr.ss_family,
+            get_in_addr((struct sockaddr *)&their_addr),
+            s, sizeof s);
+        printf("server: got connection from %s\n", s);
 
+        if (!fork()) { // this is the child process
+            close(sockfd); // child doesn't need the listener
+			char* buffer = (char*) malloc(MAXDATASIZE);
+			size_t total_read = 0;
+			size_t byte_read;
 
+			while( (byte_read = recv(new_fd, buffer+total_read, MAXDATASIZE - total_read, 0) ) > 0 ){
+				total_read += byte_read;
+				if (strstr(buffer + total_read - 4, "\r\n\r\n") != NULL) {
+					break;
+			    }
+				printf("total read : %zu\n", total_read);
+			}
 
-
-			close(new_fd);
-			exit(0);
-		}
-
-		close(new_fd);  // parent doesn't need this
-	}
-
+            if (send(new_fd, buffer, total_read, 0) == -1)
+                perror("send");
+			free(buffer);
+            close(new_fd);
+            exit(0);
+        }
+        close(new_fd);  // parent doesn't need this
+    }
 
 	return 0;
 }
