@@ -19,6 +19,94 @@ from https://beej.us/guide/bgnet/
 
 #define MAXDATASIZE 10000000
 
+#define BACKLOG 50   // how many pending connections queue will hold
+
+// parsing 을 위한 구조ㅊ
+typedef struct {
+    char host[1024];
+    int port;
+    char path[4096];
+} ParsedRequest;
+
+// parsing 하는 함수 
+// HTTP 요청을 파싱하는 함수
+// 성공 시 0, 실패(잘못된 요청) 시 -1 반환
+int parse_request(char *buffer, size_t buffer_len, ParsedRequest *req) {
+    char method[16], url[4096], version[16];
+
+    // 1. 요청 라인 파싱 (e.g., "GET HTTP/1.0 http://example.com/ ")
+    int sscanf_res = sscanf(buffer, "%s %s %s", method, url, version);
+    if (sscanf_res != 3) {
+        fprintf(stderr, "Malformed request line\n");
+        return -1;
+    }
+
+    // 2. 메소드와 버전 검증 (GET, HTTP/1.0 만 허용)
+    if (strcmp(method, "GET") != 0) {
+        fprintf(stderr, "Invalid method: %s\n", method);
+        return -1;
+    }
+    if (strstr(version, "HTTP/1.0") == NULL) {
+        fprintf(stderr, "Invalid HTTP version: %s\n", version);
+        return -1;
+    }
+
+    // 3. Host 헤더 존재 여부 검증
+    if (strstr(buffer, "Host:") == NULL) {
+        fprintf(stderr, "Host header is missing\n");
+        return -1;
+    }
+
+    // 4. URL 파싱하여 host, port, path 추출
+    char *host_ptr = strstr(url, "http://");
+    if (host_ptr != NULL) {
+        host_ptr += strlen("http://"); // "http://" 다음부터가 실제 호스트 주소
+    } else {
+        // http:// 가 없는 경우를 대비 (문제에서는 항상 있다고 가정)
+        host_ptr = url;
+    }
+
+    char *port_ptr = strchr(host_ptr, ':');
+    char *path_ptr = strchr(host_ptr, '/');
+
+    if (path_ptr == NULL) {
+        // 경로가 없는 경우 (e.g., http://example.com)
+        // 루트 경로로 설정
+        strcpy(req->path, "/");
+    } else {
+        strncpy(req->path, path_ptr, sizeof(req->path) - 1);
+        req->path[sizeof(req->path) - 1] = '\0';
+    }
+
+    if (port_ptr != NULL && (path_ptr == NULL || port_ptr < path_ptr)) {
+        // 포트가 명시된 경우 (e.g., http://example.com:8080/)
+        req->port = atoi(port_ptr + 1);
+        // 호스트 이름에서 포트 부분 제외
+        strncpy(req->host, host_ptr, port_ptr - host_ptr);
+        req->host[port_ptr - host_ptr] = '\0';
+    } else {
+        // 포트가 명시되지 않은 경우
+        req->port = 80; // 기본 포트 80
+        if (path_ptr != NULL) {
+            strncpy(req->host, host_ptr, path_ptr - host_ptr);
+            req->host[path_ptr - host_ptr] = '\0';
+        } else {
+            // 경로도 없는 경우 (e.g., http://example.com)
+            strcpy(req->host, host_ptr);
+        }
+    }
+    
+    // gethostbyname으로 호스트 유효성 검증 (PDF Hint)
+    if (gethostbyname(req->host) == NULL) {
+        fprintf(stderr, "Invalid host: %s\n", req->host);
+        return -1;
+    }
+
+    return 0; // 파싱 성공
+}
+
+
+
 int send_byte(int sockfd, char *buf, size_t len) {
     size_t total_sent = 0;
     while (total_sent < len) {
@@ -46,7 +134,6 @@ int recv_byte(int sockfd, char *buf, size_t len) {
     return 0;
 }
 
-#define BACKLOG 50   // how many pending connections queue will hold
 
 size_t create_msg(char op, u_int16_t keylen, u_int32_t datalen, char* to, char* key, char* txt){
 	size_t i=0;
@@ -208,14 +295,43 @@ int main(int argc, char *argv[])
 
 			while( (byte_read = recv(new_fd, buffer+total_read, MAXDATASIZE - total_read, 0) ) > 0 ){
 				total_read += byte_read;
-				if (strstr(buffer + total_read - 4, "\r\n\r\n") != NULL) {
+				if ( buffer[total_read - 4] == '\r' && buffer[total_read - 3] == '\n' && buffer[total_read - 2] == '\r' && buffer[total_read - 1] == '\n'){
 					break;
 			    }
 				printf("total read : %zu\n", total_read);
 			}
 
-            if (send(new_fd, buffer, total_read, 0) == -1)
-                perror("send");
+			if (byte_read <= 0) { //에러나오면 바로 정리하고
+                perror("recv");
+                free(buffer);
+                close(new_fd);
+                exit(1);
+            }
+
+			printf("---------- Received Request ----------\n%s\n", buffer);
+
+			ParsedRequest req;
+            memset(&req, 0, sizeof(ParsedRequest)); // 구조체 초기화
+
+			if (parse_request(buffer, total_read, &req) == 0) {
+                // 파싱 성공
+                printf("---------- Parsing Success ----------\n");
+                printf("Host: %s\n", req.host);
+                printf("Port: %d\n", req.port);
+                printf("Path: %s\n", req.path);
+                printf("-------------------------------------\n");
+
+                // TODO: 여기서 파싱된 정보를 바탕으로 원격 서버에 접속하고 데이터를 요청해야 합니다.
+
+            } else {
+                // 파싱 실패: 400 Bad Request 응답 전송
+                printf("---------- Parsing Failed: Sending 400 Bad Request ----------\n");
+                char *error_msg = "HTTP/1.0 400 Bad Request\r\n";
+                if (send(new_fd, error_msg, strlen(error_msg), 0) == -1) {
+                    perror("send error");
+                }
+            }
+
 			free(buffer);
             close(new_fd);
             exit(0);
