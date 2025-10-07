@@ -16,6 +16,7 @@ from https://beej.us/guide/bgnet/
 #include <sys/wait.h>
 #include <signal.h>
 #include <ctype.h>
+#include <strings.h> // For strcasecmp, strcasestr
 
 #define MAXDATASIZE 10000000
 
@@ -28,13 +29,13 @@ typedef struct {
     char path[4096];
 } ParsedRequest;
 
-// parsing 하는 함수 
+// parsing 하는 함수
 // HTTP 요청을 파싱하는 함수
 // 성공 시 0, 실패(잘못된 요청) 시 -1 반환
 int parse_request(char *buffer, size_t buffer_len, ParsedRequest *req) {
     char method[16], url[4096], version[16];
 
-    // 1. 요청 라인 파싱 (e.g., "GET HTTP/1.0 http://example.com/ ")
+    // 1. 요청 라인 파싱 (e.g., "GET http://example.com/ HTTP/1.0")
     int sscanf_res = sscanf(buffer, "%s %s %s", method, url, version);
     if (sscanf_res != 3) {
         fprintf(stderr, "Malformed request line\n");
@@ -51,52 +52,73 @@ int parse_request(char *buffer, size_t buffer_len, ParsedRequest *req) {
         return -1;
     }
 
-    // 3. Host 헤더 존재 여부 검증
-    if (strstr(buffer, "Host:") == NULL) {
-        fprintf(stderr, "Host header is missing\n");
+    // 3. URL에서 host, port, path 추출
+    if (strncmp(url, "http://", 7) != 0) {
+        fprintf(stderr, "URL must be absolute for proxy requests (start with http://)\n");
         return -1;
     }
+    char *host_ptr = url + 7;
 
-    // 4. URL 파싱하여 host, port, path 추출
-    char *host_ptr = strstr(url, "http://");
-    if (host_ptr != NULL) {
-        host_ptr += strlen("http://"); // "http://" 다음부터가 실제 호스트 주소
-    } else {
-        // http:// 가 없는 경우를 대비 (문제에서는 항상 있다고 가정)
-        host_ptr = url;
-    }
-
-    char *port_ptr = strchr(host_ptr, ':');
     char *path_ptr = strchr(host_ptr, '/');
-
     if (path_ptr == NULL) {
-        // 경로가 없는 경우 (e.g., http://example.com)
-        // 루트 경로로 설정
         strcpy(req->path, "/");
     } else {
         strncpy(req->path, path_ptr, sizeof(req->path) - 1);
         req->path[sizeof(req->path) - 1] = '\0';
     }
 
+    char *port_ptr = strchr(host_ptr, ':');
     if (port_ptr != NULL && (path_ptr == NULL || port_ptr < path_ptr)) {
-        // 포트가 명시된 경우 (e.g., http://example.com:8080/)
         req->port = atoi(port_ptr + 1);
-        // 호스트 이름에서 포트 부분 제외
         strncpy(req->host, host_ptr, port_ptr - host_ptr);
         req->host[port_ptr - host_ptr] = '\0';
     } else {
-        // 포트가 명시되지 않은 경우
-        req->port = 80; // 기본 포트 80
+        req->port = 80;
         if (path_ptr != NULL) {
             strncpy(req->host, host_ptr, path_ptr - host_ptr);
             req->host[path_ptr - host_ptr] = '\0';
         } else {
-            // 경로도 없는 경우 (e.g., http://example.com)
             strcpy(req->host, host_ptr);
         }
     }
-    
-    // gethostbyname으로 호스트 유효성 검증 (PDF Hint)
+
+    // 4. Host 헤더 값과 URL의 호스트가 일치하는지 검증
+    char *host_header_start = strcasestr(buffer, "Host:");
+    if (host_header_start == NULL) {
+        fprintf(stderr, "Host header is missing\n");
+        return -1;
+    }
+    host_header_start += 5; // Skip "Host:"
+    while (*host_header_start == ' ') host_header_start++; // Skip spaces
+
+    char *host_header_end = strstr(host_header_start, "\r\n");
+    if (host_header_end == NULL) host_header_end = strstr(host_header_start, "\n");
+    if (host_header_end == NULL) {
+        fprintf(stderr, "Malformed Host header\n");
+        return -1;
+    }
+
+    char header_host[1024];
+    int len = host_header_end - host_header_start;
+    if (len >= sizeof(header_host)) {
+        fprintf(stderr, "Host header value too long\n");
+        return -1;
+    }
+    strncpy(header_host, host_header_start, len);
+    header_host[len] = '\0';
+
+    char *port_in_header = strchr(header_host, ':');
+    if (port_in_header != NULL) {
+        *port_in_header = '\0';
+    }
+
+    if (strcasecmp(req->host, header_host) != 0) {
+        fprintf(stderr, "Host header does not match URL host\n");
+        fprintf(stderr, "URL host: '%s', Header host: '%s'\n", req->host, header_host);
+        return -1;
+    }
+
+    // 5. gethostbyname으로 호스트 유효성 검증
     if (gethostbyname(req->host) == NULL) {
         fprintf(stderr, "Invalid host: %s\n", req->host);
         return -1;
@@ -321,7 +343,64 @@ int main(int argc, char *argv[])
                 printf("Path: %s\n", req.path);
                 printf("-------------------------------------\n");
 
-                // TODO: 여기서 파싱된 정보를 바탕으로 원격 서버에 접속하고 데이터를 요청해야 합니다.
+                // Step 2: 원격 서버에 연결하기 위한 클라이언트 소켓 생성
+                int remote_sockfd;
+                struct hostent *server;
+                struct sockaddr_in serv_addr;
+
+                // gethostbyname으로 호스트 정보 가져오기
+                server = gethostbyname(req.host);
+                if (server == NULL) {
+                    fprintf(stderr, "ERROR, no such host: %s\n", req.host);
+                    // 호스트를 찾을 수 없으면 클라이언트에게 오류를 보낼 수 있지만,
+                    // 여기서는 간단히 연결을 종료합니다.
+                    // parse_request에서 이미 검증했지만, 한 번 더 확인합니다.
+                } else {
+                    // 원격 서버에 연결할 소켓 생성
+                    remote_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+                    if (remote_sockfd < 0) {
+                        perror("ERROR opening remote socket");
+                    } else {
+                        // 원격 서버 주소 설정
+                        memset(&serv_addr, 0, sizeof(serv_addr));
+                        serv_addr.sin_family = AF_INET;
+                        memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+                        serv_addr.sin_port = htons(req.port);
+
+                        // 원격 서버에 연결
+                        if (connect(remote_sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+                            perror("ERROR connecting to remote server");
+                        } else {
+                            printf("---------- Connected to remote server. Sending request... ----------\n");
+
+                            // Step 2-1: 클라이언트로부터 받은 요청을 원격 서버로 전송
+                            if (send(remote_sockfd, buffer, total_read, 0) < 0) {
+                                perror("ERROR writing to remote socket");
+                            } else {
+                                printf("---------- Request sent. Waiting for response... ----------\n");
+
+                                // Step 3: 원격 서버로부터 응답을 받아 클라이언트로 전송
+                                char* response_buffer = (char*) malloc(MAXDATASIZE);
+                                ssize_t bytes_received;
+                                while ((bytes_received = recv(remote_sockfd, response_buffer, MAXDATASIZE - 1, 0)) > 0) {
+                                    response_buffer[bytes_received] = '\0'; // Null-terminate for safety
+                                    printf("---------- Received %zd bytes from remote. Forwarding to client... ----------\n", bytes_received);
+                                    if (send(new_fd, response_buffer, bytes_received, 0) < 0) {
+                                        perror("ERROR writing to client socket");
+                                        break; // 클라이언트로 전송 실패 시 루프 중단
+                                    }
+                                }
+
+                                if (bytes_received < 0) {
+                                    perror("ERROR reading from remote socket");
+                                }
+                                free(response_buffer);
+                                printf("---------- Response forwarded. Closing connection. ----------\n");
+                            }
+                        }
+                        close(remote_sockfd); // 원격 서버 소켓 닫기
+                    }
+                }
 
             } else {
                 // 파싱 실패: 400 Bad Request 응답 전송
