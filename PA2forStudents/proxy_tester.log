@@ -1,0 +1,45 @@
+Binary: ./work/proxy
+Running on port 5678
+#############################
+
+Basic Functionality Test
+
+#############################
+
+### Testing: http://www.kaist.edu
+http://www.kaist.edu: [PASSED] (5/5 points)
+
+### Testing: http://info.in2p3.fr/
+http://info.in2p3.fr/: [PASSED] (5/5 points)
+
+### Testing: http://info.cern.ch/
+http://info.cern.ch/: [PASSED] (5/5 points)
+
+### Testing: http://info.cern.ch/hypertext/WWW/TheProject.html
+http://info.cern.ch/hypertext/WWW/TheProject.html: [PASSED] (5/5 points)
+
+#############################
+
+Extended Functionality Test
+
+#############################
+
+### Testing error case #1:
+Request without host header field: [PASSED] (8/8 points)
+
+### Testing error case #2:
+Request with method other than GET (case 1): [PASSED] (2/2 points)
+Request with method other than GET (case 2): [PASSED] (2/2 points)
+Request with method other than GET (case 3): [PASSED] (2/2 points)
+Request with method other than GET (case 4): [PASSED] (2/2 points)
+
+### Testing error case #3:
+Request with different HTTP version (other than v1.0): [PASSED] (8/8 points)
+
+### Testing error case #4:
+Invalid host header: [PASSED] (8/8 points)
+
+### Testing error case #5:
+Different URI and host: [PASSED] (8/8 points)
+
+Total Score:	60 / 60
