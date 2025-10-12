@@ -20,6 +20,12 @@ from https://beej.us/guide/bgnet/
 #include <sys/stat.h> // For mkdir
 #include <time.h>     // For time_t
 
+// Thundering Herd Problem
+// https://velog.io/@gkdbssla97/Thundering-Herd-Problem%EC%9D%84-%EB%A7%88%EC%A3%BC%EC%B3%A4%EB%8B%A4
+
+// double-checked locking pattern
+//https://velog.io/@hmcck27/Double-Checked-Locking
+
 //https://speardragon.github.io/system/system%20programming/System-Programming-6%EC%9E%A5.-%ED%8C%8C%EC%9D%BC-%EB%B0%8F-%EB%A0%88%EC%BD%94%EB%93%9C-%EC%9E%A0%EA%B8%88/
 // 파일에 동시에 접근하면 race condition 생겨서 상호배제를 위한
 #include <sys/file.h> // For flock.    
@@ -319,7 +325,9 @@ int main(int argc, char *argv[])
 				if (byte_read > 0) {
 					total_read += byte_read;
 					buffer[total_read] = '\0';
+
 					if (strstr(buffer, "\r\n\r\n")) { 
+                        // printf("End of headers reached.\n");
 						break;
 					}
 				} else {
@@ -342,7 +350,6 @@ int main(int argc, char *argv[])
             memset(&req, 0, sizeof(ParsedRequest));
 
 			if (parse_request(buffer, total_read, &req) == 0) {
-
                 // 캐시된 응답이 있는지 확인 cache/{해시값} 형식으로 저장
                 // -> expires unix time 확인하고 있으면 있던거 다 쭉 보내기
                 // -> 아니면 miss 로 원래 로직으로 하고,
@@ -437,11 +444,49 @@ int main(int argc, char *argv[])
                                                 int max_age = atoi(max_age_str + 8);
                                                 if (max_age > 0) { // age > 0 유효하면 저장
                                                     time_t expires_at = time(NULL) + max_age;
-                                                    FILE *cache_write = fopen(cache_filepath, "w");
+                                                    FILE *cache_write = fopen(cache_filepath, "a+"); // 쓰기용으로 열기 원래 데이터 지우지 않아야함.
                                                     if (cache_write) {
-                                                        // printf("Caching response for %s\n", full_url);
-                                                        fprintf(cache_write, "%ld\n", expires_at);
-                                                        fwrite(response_buffer, 1, response_size, cache_write);
+                                                        int fd = fileno(cache_write);
+
+                                                        // fseek(cache_file, 0, SEEK_END); // 파일 끝으로 이동
+                                                        // long file_size = ftell(cache_file);
+                                                        // rewind(cache_file); // 다시 처음으로
+
+                                                        // int need_fetch = 1;
+                                                        // if ( file_size > 0 ) {
+                                                        //     //파일내용 있는경우
+                                                        //     // 다시 유효한지 확인
+                                                        //     time_t expires_at;
+                                                        //     if ( fscanf(cache_file, "%ld\n", &expires_at) == 1 && time(NULL) < expires_at ) {
+                                                        //         // 유효한 캐시인 경우
+                                                        //         need_fetch = 0;
+                                                        //     }
+                                                        // }
+
+
+                                                        if( flock(fd, LOCK_EX) == 0 ){
+                                                            // printf("Caching response for %s\n", full_url);
+                                                            // 파일이 써져있는지 확인해야함
+                                                            fseek(cache_write, 0, SEEK_END); // 파일 끝으로 이동
+                                                            int file_size = ftell(cache_write);
+                                                            rewind(cache_write); // 다시 처음으로
+
+                                                            int need_fetch = 1;
+
+                                                            if( file_size > 0 ){
+                                                                time_t expires_at;
+                                                                if ( fscanf(cache_write, "%ld\n", &expires_at) == 1 && time(NULL) < expires_at ) {
+                                                                    need_fetch = 0;
+                                                                }
+                                                            }
+
+                                                            if( need_fetch ){
+                                                                ftruncate(fd, 0);
+                                                                fprintf(cache_write, "%ld\n", expires_at);
+                                                                fwrite(response_buffer, 1, response_size, cache_write);
+                                                            }
+                                                            flock(fd, LOCK_UN);
+                                                        }
                                                         fclose(cache_write);
                                                     }
                                                 }
@@ -459,7 +504,7 @@ int main(int argc, char *argv[])
                 }
 
             } else {
-                // 파싱 실패: 400 Bad Request 응답 전송
+                // 파싱 실패
                 char *error_msg = "HTTP/1.0 400 Bad Request\r\n\r\n";
                 send(new_fd, error_msg, strlen(error_msg), 0);
             }
@@ -470,6 +515,5 @@ int main(int argc, char *argv[])
         }
         close(new_fd);
     }
-
 	return 0;
 }
