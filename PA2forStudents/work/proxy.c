@@ -20,6 +20,8 @@ from https://beej.us/guide/bgnet/
 #include <sys/stat.h> // For mkdir
 #include <time.h>     // For time_t
 
+#include <netdb.h>
+
 // Thundering Herd Problem
 // https://velog.io/@gkdbssla97/Thundering-Herd-Problem%EC%9D%84-%EB%A7%88%EC%A3%BC%EC%B3%A4%EB%8B%A4
 
@@ -140,7 +142,7 @@ int parse_request(char *buffer, size_t buffer_len, ParsedRequest *req) {
     }
 
     if (gethostbyname(req->host) == NULL) { // 호스트 없는거면 잘못된 요청
-        // fprintf(stderr, "Invalid host: %s\n", req->host);
+        // fprintf(stderr, "DNS lookup FAILED for host '%s': %s\n", req->host, hstrerror(h_errno));
         return -1;
     }
 
@@ -344,7 +346,6 @@ int main(int argc, char *argv[])
             }
 
 			buffer[total_read] = '\0';
-
             // request 파싱하기
 			ParsedRequest req;
             memset(&req, 0, sizeof(ParsedRequest));
@@ -354,6 +355,7 @@ int main(int argc, char *argv[])
                 // -> expires unix time 확인하고 있으면 있던거 다 쭉 보내기
                 // -> 아니면 miss 로 원래 로직으로 하고,
                 // 받은거 보고 private 아니고 time 0 아니면 저장
+                // printf("Parsed Request: Host=%s, Port=%d, Path=%s\n", req.host, req.port, req.path);
                 char full_url[sizeof(req.host) + sizeof(req.path)]; // 1024 + 4096 = 5120
                 snprintf(full_url, sizeof(full_url), "%s%s", req.host, req.path); //전체 url 을 구성 -> 나중에 캐싱 된거 있나 확인하는 용도.
 
@@ -420,7 +422,14 @@ int main(int argc, char *argv[])
                         if (connect(remote_sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                             // perror("ERROR connecting to remote server");
                         } else {
-                            if (send(remote_sockfd, buffer, total_read, 0) < 0) {
+                            // 원격 서버로 요청 전송
+                            char forward_request_buffer[RESPONSE_BUF_SIZE];
+                            int new_request_len = snprintf(forward_request_buffer, sizeof(forward_request_buffer),
+                                                           "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n",
+                                                           req.path, req.host);
+
+
+                            if (send_byte(remote_sockfd, forward_request_buffer, new_request_len) < 0) {
                                 // perror("ERROR writing to remote socket");
                             } else {
                                 // 원격 서버로부터의 전체 응답을 버퍼에 저장
@@ -493,7 +502,7 @@ int main(int argc, char *argv[])
                                             }
                                         }
                                         // 받은 응답을 클라이언트에 전송
-                                        send(new_fd, response_buffer, response_size, 0);
+                                        send_byte(new_fd, response_buffer, response_size);
                                     }
                                     free(response_buffer);
                                 }
@@ -506,7 +515,7 @@ int main(int argc, char *argv[])
             } else {
                 // 파싱 실패
                 char *error_msg = "HTTP/1.0 400 Bad Request\r\n\r\n";
-                send(new_fd, error_msg, strlen(error_msg), 0);
+                send_byte(new_fd, error_msg, strlen(error_msg));
             }
 
 			free(buffer);
