@@ -20,6 +20,7 @@
 #include "transport.h"
 
 
+
 enum {
     CSTATE_LISTEN, // passive open
     CSTATE_SYN_SENT, // active open
@@ -50,6 +51,21 @@ typedef struct
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
+//ref http://www.ktword.co.kr/test/view/view.php?m_temp1=1889
+// typedef struct{ // flag 는 비트필드로 하는게 좋겠다.
+//     uint16_t src_port;
+//     uint16_t dst_port;
+//     uint32_t seq_num;
+//     uint32_t ack_num;
+    
+//     uint16_t data_offset;
+//     uint16_t th_flags;
+//     uint16_t window_size;
+// } packet;
+
+static void init_tcphdr(tcphdr* hdr, uint16_t src_port, uint16_t dst_port, uint32_t seq_num, uint32_t ack_num, uint16_t data_offset, uint16_t th_flags){
+    
+}
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -71,9 +87,11 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
     // 서버 : SYN + ACK -> 클라이언트 / 보내는 정보 : seq num, ack num / ack num = 클라이언트가 보낸 seq num + 1 / 서버 state : SYN_RCVD
     // 클라이언트 : ACK -> 서버 / 보내는 정보 : seq num, ack num / ack num = 서버가 보낸 seq num + 1 / 클라이언트 state : ESTABLISHED / 서버 state : ESTABLISHED
 
+    // tcphdr 구조체가 tcp 헤더 구조체임.
+
     if (is_active){ // active open : client
         ctx->connection_state = CSTATE_SYN_SENT; // state 변경 SYS_SENT 로 변경하고
-        stcp_network_send(); // 서버에 SYN 패킷 보냄
+        stcp_network_send(); // 서버에 SYN 패킷 보냄       stcp_network_send(mysd, buf1, len1, buf2, len2, NULL); 이런식으로 끝에 NULL 붙여서 호출, 여러개 가능
         stcp_network_recv(); // 서버로 부터 SYN + ACK 패킷 받음
         ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED 로 변경
         stcp_network_send(); // 서버에 ACK 패킷 보냄 
