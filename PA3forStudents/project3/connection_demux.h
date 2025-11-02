@@ -23,4 +23,3 @@ void _mysock_close_passive_socket(struct mysock_context *ctx);
 void _mysock_passive_connection_complete(struct mysock_context *new_ctx);
 
 #endif  /* __CONNECTION_DEMUX_H__ */
-
