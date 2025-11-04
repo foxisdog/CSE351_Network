@@ -44,6 +44,9 @@ typedef struct
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
 
+    tcp_seq myseqnum; // 다음에 사용할 시퀀스 번호
+    tcp_seq peerseqnum; // 상대방이 보낸 시퀀스 번호 state 를 저장하는게 더 좋음.
+
     /* any other connection-wide global variables go here */
 } context_t;
 
@@ -52,6 +55,7 @@ static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
 
 //ref http://www.ktword.co.kr/test/view/view.php?m_temp1=1889
+// https://en.wikipedia.org/wiki/Transmission_Control_Protocol
 // typedef struct{ // flag 는 비트필드로 하는게 좋겠다.
 //     uint16_t src_port;
 //     uint16_t dst_port;
@@ -63,9 +67,28 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 //     uint16_t window_size;
 // } packet;
 
-static void init_tcphdr(tcphdr* hdr, uint16_t src_port, uint16_t dst_port, uint32_t seq_num, uint32_t ack_num, uint16_t data_offset, uint16_t th_flags){
-    
+#define WINDOWSIZE 3072
+
+static void init_tcphdr(
+    struct tcphdr* hdr,
+    // uint16_t src_port, uint16_t dst_port,
+    tcp_seq seq_num,
+    tcp_seq ack_num,
+    uint8_t th_flags
+){
+    memset(hdr, 0, sizeof(struct tcphdr));
+
+    // hdr->th_sport = htons(src_port); 이거는 stcp_network_send()
+    // hdr->th_dport = htons(dst_port);
+    hdr->th_seq = htonl(seq_num);
+    hdr->th_ack = htonl(ack_num);
+    hdr->th_off = 5; // Data Offset 데이터 시작하는 위치 : 헤더 크기
+    hdr->th_flags = th_flags;
+    hdr->th_win = htons(WINDOWSIZE);
 }
+
+// acknum의 역할은 당신이 보낸 데이터를 여기까지 잘 받았으니, 이제 이 번호부터 시작하는 데이터를 보내주세요라고 상대방에게 알려주는 것
+// vs peerseqnum : 
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -79,7 +102,8 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
     assert(ctx);
 
     generate_initial_seq_num(ctx); // initial_sequence num 을 1 로 바꿈.
-
+    ctx->myseqnum = ctx->initial_sequence_num; // 내 시퀀스 번호 설정
+    ctx->peerseqnum = 0; // 상대방 시퀀스 번호 설정
 
     // 여기에는 TCP 3-way handshake 구현 필요함.
     // 3-way handshake 구조 
@@ -88,20 +112,63 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
     // 클라이언트 : ACK -> 서버 / 보내는 정보 : seq num, ack num / ack num = 서버가 보낸 seq num + 1 / 클라이언트 state : ESTABLISHED / 서버 state : ESTABLISHED
 
     // tcphdr 구조체가 tcp 헤더 구조체임.
+    size_t maxlen = ( sizeof( struct tcphdr ) + STCP_MSS);
+    size_t recv_len;
+    char recv_buff[maxlen]; // 패킷 받을 버퍼
+    struct tcphdr* recv_hdr = ( struct tcphdr* ) recv_buff;
+
+    size_t send_len;
+    char send_buff[maxlen]; // 패킷 받을 버퍼
+    struct tcphdr* send_hdr = ( struct tcphdr* ) send_buff;
+
 
     if (is_active){ // active open : client
         ctx->connection_state = CSTATE_SYN_SENT; // state 변경 SYS_SENT 로 변경하고
-        stcp_network_send(); // 서버에 SYN 패킷 보냄       stcp_network_send(mysd, buf1, len1, buf2, len2, NULL); 이런식으로 끝에 NULL 붙여서 호출, 여러개 가능
-        stcp_network_recv(); // 서버로 부터 SYN + ACK 패킷 받음
-        ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED 로 변경
-        stcp_network_send(); // 서버에 ACK 패킷 보냄 
 
+        init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_SYN); // SYN 패킷 초기화
+        stcp_network_send(sd, send_hdr, sizeof(struct tcphdr), NULL); // 서버에 SYN 패킷 보냄       stcp_network_send(mysd, buf1, len1, buf2, len2, NULL); 이런식으로 끝에 NULL 붙여서 호출, 여러개 가능
+        ctx->myseqnum++; // 내 시퀀스 번호 업데이트 
+
+        recv_len = stcp_network_recv(sd, recv_buff, maxlen ); // 서버로 부터 SYN + ACK 패킷 받음
+        
+        if (recv_len >= sizeof(struct tcphdr) &&
+        (recv_hdr->th_flags & (TH_SYN | TH_ACK)) == (TH_SYN | TH_ACK) && // SYN, ACK 플래그 확인
+        ntohl(recv_hdr->th_ack) == ctx->myseqnum){
+            ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED 로 변경
+
+            ctx->peerseqnum = ntohl(recv_hdr->th_seq) + 1; // 상대방 seq num 저장
+
+            init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_ACK); // ACK 패킷 초기화
+            stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 서버에 ACK 패킷 보냄 
+        }else{
+            
+        }
     }else{ // passive open : server
-        stcp_network_recv(); // 클라이언트로 부터 SYN 패킷 받음
-        ctx->connection_state = CSTATE_SYN_RCVD; // state 변경 SYN_RCVD
-        stcp_network_send(); // 클라이언트에 SYN + ACK 패킷 보냄
-        stcp_network_recv(); // 클라이언트로 부터 ACK 패킷 받음
-        ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED
+        ctx->connection_state = CSTATE_LISTEN; // state 변경 LISTEN
+
+        recv_len = stcp_network_recv(sd, recv_buff, maxlen); // 클라이언트로 부터 SYN 패킷 받음
+        
+        if( recv_len >= sizeof(struct tcphdr) &&
+            (recv_hdr->th_flags & TH_SYN) == TH_SYN ){
+                ctx->peerseqnum = ntohl(recv_hdr->th_seq) + 1;
+                ctx->connection_state = CSTATE_SYN_RCVD; // state 변경 SYN_RCVD
+        }
+
+
+        init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_SYN | TH_ACK ); // SYN + ACK 패킷 초기화
+        stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 클라이언트에 SYN + ACK 패킷 보냄
+        ctx->myseqnum++; // 내 시퀀스 번호 업데이트
+        
+
+        recv_len = stcp_network_recv( sd, recv_buff, maxlen); // 클라이언트로 부터 ACK 패킷 받음
+        if( recv_len >= sizeof(struct tcphdr) &&
+            (recv_hdr->th_flags & TH_ACK) == TH_ACK &&
+            ntohl(recv_hdr->th_ack) == ctx->myseqnum &&
+            ntohl(recv_hdr->th_seq) == ctx->peerseqnum
+        ){
+            ctx->peerseqnum = ntohl(recv_hdr->th_seq); // 상대방 seq num 저장
+            ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED
+        }
     }
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
