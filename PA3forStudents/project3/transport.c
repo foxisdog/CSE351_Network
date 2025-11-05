@@ -47,6 +47,10 @@ typedef struct
     tcp_seq myseqnum; // 다음에 사용할 시퀀스 번호
     tcp_seq peerseqnum; // 상대방이 보낸 시퀀스 번호 state 를 저장하는게 더 좋음.
 
+    tcp_seq last_peer_ack; // 마지막으로 상대방이 ack 보낸 번호
+    
+    bool_t ack_pending; // ack 보낸지 말지
+    int packets_since_ack; // ack 보낸 이후로 받은 패킷 수
     /* any other connection-wide global variables go here */
 } context_t;
 
@@ -68,6 +72,15 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 // } packet;
 
 #define WINDOWSIZE 3072
+
+//act 전송 함수
+static void send_ack(mysocket_t sd, context_t *ctx){
+    char send_buf[sizeof(struct tcphdr)];
+    struct tcphdr* send_hdr = (struct tcphdr*) send_buf;
+
+    init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_ACK);
+    stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL );    
+}
 
 static void init_tcphdr(
     struct tcphdr* hdr,
@@ -141,7 +154,7 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
             init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_ACK); // ACK 패킷 초기화
             stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 서버에 ACK 패킷 보냄 
         }else{
-            
+            // 3-way handshake 실패 처리 필요하지만 일단 패스
         }
     }else{ // passive open : server
         ctx->connection_state = CSTATE_LISTEN; // state 변경 LISTEN
@@ -212,18 +225,45 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
 
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
-        event = stcp_wait_for_event(sd, 0, NULL); // 0의미 : 아무 이벤트도 기다리지 않음, ANYEVENT 의미 : 모든 이벤트 기다림
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL); // 0의미 : 아무 이벤트도 기다리지 않음, ANYEVENT 의미 : 모든 이벤트 기다림 // 나중에 timeout 필요하면 바꾸기
 
         // 여기 아래에는 이벤트 처리 코드 작성함.
         // active close, passive close, 데이터 수신, 데이터 전송
         /* check whether it was the network, app, or a close request */
-        if (event & APP_DATA)
+        if (event & APP_DATA) // 이벤트가 application layer 로 부터 온 데이터인 경우 -> data 를 보내야함
         {
+            tcp_seq unacked_data = ctx->myseqnum - ctx->last_peer_ack;
+            uint32_t available_window = WINDOWSIZE - unacked_data;
+            if (available_window == 0){
+                continue; // 윈도우 사이즈가 0 이면 데이터 못 보냄
+            }
+            size_t bytes_to_send = MIN( STCP_MSS, available_window); // 보낼 수 있는 최대 데이터 크기
+
+            char app_buff[STCP_MSS]; //application layer 로 부터 받을 버퍼 준비해서
+
+            ssize_t bytes_read = stcp_app_recv(sd, app_buff, bytes_to_send); // app 에서 데이터 받아옴.
+
+            if ( bytes_read <= 0 ) continue; // 데이터 못읽어오면 패스
+
+            char send_buff[sizeof(struct tcphdr)];
+            struct tcphdr* send_hdr = (struct tcphdr*) send_buff;
+
+            init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_ACK); // ack 플래그 설정
+            stcp_network_send( sd, send_hdr, sizeof( struct tcphdr), app_buff, bytes_read, NULL );
+
+            ctx->myseqnum += bytes_read; // 내 시퀀스 번호 업데이트
             /* the application has requested that data be sent */
             /* see stcp_app_recv() */
+            // stcp_app_recv(sd, NULL, 0); // app layer 로 부터 데이터를받아옴?
+
         }
 
-        /* etc. */
+        if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
+        {
+            stcp_network_recv(sd, NULL, 0); // network layer 로 부터 데이터를받아옴
+        }
+
+
     }
 }
 
