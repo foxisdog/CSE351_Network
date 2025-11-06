@@ -226,6 +226,7 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
         event = stcp_wait_for_event(sd, ANY_EVENT, NULL); // 0의미 : 아무 이벤트도 기다리지 않음, ANYEVENT 의미 : 모든 이벤트 기다림 // 나중에 timeout 필요하면 바꾸기
+        // 구조 보면 안에서 queue 로 head 체크해서 이벤트 있다 없다 알려줌.
 
         // 여기 아래에는 이벤트 처리 코드 작성함.
         // active close, passive close, 데이터 수신, 데이터 전송
@@ -234,14 +235,13 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
         {
             tcp_seq unacked_data = ctx->myseqnum - ctx->last_peer_ack;
             uint32_t available_window = WINDOWSIZE - unacked_data;
-            if (available_window == 0){
-                continue; // 윈도우 사이즈가 0 이면 데이터 못 보냄
-            }
+            if (available_window == 0) continue; // 윈도우 사이즈가 0 이면 데이터 못 보냄
+
             size_t bytes_to_send = MIN( STCP_MSS, available_window); // 보낼 수 있는 최대 데이터 크기
 
             char app_buff[STCP_MSS]; //application layer 로 부터 받을 버퍼 준비해서
 
-            ssize_t bytes_read = stcp_app_recv(sd, app_buff, bytes_to_send); // app 에서 데이터 받아옴.
+            ssize_t bytes_read = stcp_app_recv(sd, app_buff, bytes_to_send); // app 에서 데이터 받아옴. // queue 에서 데이터 뽑아오는거임.
 
             if ( bytes_read <= 0 ) continue; // 데이터 못읽어오면 패스
 
@@ -260,8 +260,15 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
 
         if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
         {
+
             stcp_network_recv(sd, NULL, 0); // network layer 로 부터 데이터를받아옴
+            //수신후 확인한 다음에 패킷 종류보고
+            //data
+            //ack
+            //fin
         }
+
+        if( event & TIMEOUT )
 
 
     }
