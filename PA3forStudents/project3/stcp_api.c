@@ -15,7 +15,7 @@
 #include "tcp_sum.h"
 #include "transport.h"
 
-#define LOG_PACKET FALSE
+#define LOG_PACKET TRUE
 
 /* called by the transport layer thread to unblock the calling application,
  * e.g. when the connection is complete, or when an error is detected while
