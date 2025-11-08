@@ -122,8 +122,17 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
     assert(ctx);
 
     generate_initial_seq_num(ctx); // initial_sequence num 을 1 로 바꿈.
+    ctx->done = FALSE; // 연결 종료 플래그 초기화
+
+    ctx->connection_state = CSTATE_LISTEN;
+    
     ctx->myseqnum = ctx->initial_sequence_num; // 내 시퀀스 번호 설정
     ctx->peerseqnum = 0; // 상대방 시퀀스 번호 설정
+
+    ctx->last_peer_ack = 0; // 마지막으로 받은 ack 번호 설정
+
+    ctx->ack_pending = FALSE;
+    ctx->packets_since_ack = 0;
 
     // 여기에는 TCP 3-way handshake 구현 필요함.
     // 3-way handshake 구조 
@@ -133,6 +142,7 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
 
     // tcphdr 구조체가 tcp 헤더 구조체임.
     size_t maxlen = ( sizeof( struct tcphdr ) + STCP_MSS);
+
     size_t recv_len;
     char recv_buff[maxlen]; // 패킷 받을 버퍼
     struct tcphdr* recv_hdr = ( struct tcphdr* ) recv_buff;
@@ -144,31 +154,28 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
 
     if (is_active){ // active open : client
         ctx->connection_state = CSTATE_SYN_SENT; // state 변경 SYS_SENT 로 변경하고
-
         init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_SYN); // SYN 패킷 초기화
         stcp_network_send(sd, send_hdr, sizeof(struct tcphdr), NULL); // 서버에 SYN 패킷 보냄       stcp_network_send(mysd, buf1, len1, buf2, len2, NULL); 이런식으로 끝에 NULL 붙여서 호출, 여러개 가능
-        ctx->myseqnum++; // 내 시퀀스 번호 업데이트 
+        ctx->myseqnum++; // 내 시퀀스 번호 업데이트 // SYN 이랑
+        
 
         recv_len = stcp_network_recv(sd, recv_buff, maxlen ); // 서버로 부터 SYN + ACK 패킷 받음
-        
         if (recv_len >= sizeof(struct tcphdr) &&
         (recv_hdr->th_flags & (TH_SYN | TH_ACK)) == (TH_SYN | TH_ACK) && // SYN, ACK 플래그 확인
         ntohl(recv_hdr->th_ack) == ctx->myseqnum){
             ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED 로 변경
-
             ctx->peerseqnum = ntohl(recv_hdr->th_seq) + 1; // 상대방 seq num 저장
 
             init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_ACK); // ACK 패킷 초기화
             stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 서버에 ACK 패킷 보냄
 
             ctx->last_peer_ack = ctx->myseqnum;
-            ctx->ack_pending = FALSE;
-            ctx->packets_since_ack = 0;
+            
         }else{
             // 3-way handshake 실패 처리 필요하지만 일단 패스
         }
     }else{ // passive open : server
-        ctx->connection_state = CSTATE_LISTEN; // state 변경 LISTEN
+        // ctx->connection_state = CSTATE_LISTEN; // state 변경 LISTEN
 
         recv_len = stcp_network_recv(sd, recv_buff, maxlen); // 클라이언트로 부터 SYN 패킷 받음
         
@@ -176,26 +183,25 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
             (recv_hdr->th_flags & TH_SYN) == TH_SYN ){
                 ctx->peerseqnum = ntohl(recv_hdr->th_seq) + 1;
                 ctx->connection_state = CSTATE_SYN_RCVD; // state 변경 SYN_RCVD
-        }
-
-
-        init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_SYN | TH_ACK ); // SYN + ACK 패킷 초기화
-        stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 클라이언트에 SYN + ACK 패킷 보냄
-        ctx->myseqnum++; // 내 시퀀스 번호 업데이트
         
 
-        recv_len = stcp_network_recv( sd, recv_buff, maxlen); // 클라이언트로 부터 ACK 패킷 받음
-        if( recv_len >= sizeof(struct tcphdr) &&
-            (recv_hdr->th_flags & TH_ACK) == TH_ACK &&
-            ntohl(recv_hdr->th_ack) == ctx->myseqnum &&
-            ntohl(recv_hdr->th_seq) == ctx->peerseqnum
-        ){
-            // ctx->peerseqnum = ntohl(recv_hdr->th_seq); // 상대방 seq num 저장
-            ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED
 
-            ctx->last_peer_ack = ctx->myseqnum;
-            ctx->ack_pending = FALSE;
-            ctx->packets_since_ack = 0;
+            init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_SYN | TH_ACK ); // SYN + ACK 패킷 초기화
+            stcp_network_send( sd, send_hdr, sizeof(struct tcphdr), NULL ); // 클라이언트에 SYN + ACK 패킷 보냄
+            ctx->myseqnum++; // 내 시퀀스 번호 업데이트
+            
+
+            recv_len = stcp_network_recv( sd, recv_buff, maxlen); // 클라이언트로 부터 ACK 패킷 받음
+            if( recv_len >= sizeof(struct tcphdr) &&
+                (recv_hdr->th_flags & TH_ACK) == TH_ACK &&
+                ntohl(recv_hdr->th_ack) == ctx->myseqnum && // 내가 보낸거에 대한 ack
+                ntohl(recv_hdr->th_seq) == ctx->peerseqnum // 내가 기대하는 seq num 
+            ){
+                // ctx->peerseqnum = ntohl(recv_hdr->th_seq); // 상대방 seq num 저장
+                ctx->connection_state = CSTATE_ESTABLISHED; // state 변경 ESTABLISHED
+                // ctx->last_peer_ack = ntohl(recv_hdr->th_ack); // 마지막으로 받은 ack num 저장
+                ctx->last_peer_ack = ctx->myseqnum;
+            }
         }
     }
 
@@ -207,6 +213,9 @@ void transport_init(mysocket_t sd, bool_t is_active) // active : client, passive
      * ECONNREFUSED, etc.) before calling the function.
      */
     stcp_unblock_application(sd);
+
+
+    // our_dprintf("handshake complete, connection established\n");
 
     control_loop(sd, ctx);
 
@@ -240,6 +249,9 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
 
     while (!ctx->done)
     {
+        // our_dprintf("seqnum: %u, peerseqnum: %u, last_peer_ack: %u, state: %d, available window : %u\n",
+        //     ctx->myseqnum, ctx->peerseqnum,  ctx->last_peer_ack, ctx->connection_state, WINDOWSIZE - (ctx->myseqnum - ctx->last_peer_ack));
+
         unsigned int event;
         
         //보내고 받을 때 쓸 버퍼 선언
@@ -266,8 +278,84 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
         // 여기 아래에는 이벤트 처리 코드 작성함.
         // active close, passive close, 데이터 수신, 데이터 전송
         /* check whether it was the network, app, or a close request */
-        if (event & APP_DATA) // 이벤트가 application layer 로 부터 온 데이터인 경우 -> data 를 보내야함
+        // our_dprintf("event: %u, timeout : %hhd\n", event, ctx->ack_pending);
+        if ( event == TIMEOUT ){ // 타임 아웃 -> ack 슛
+            // our_dprintf("TIMEOUT event\n");
+            send_ack( sd, ctx );
+            ctx->ack_pending = FALSE;
+            ctx->packets_since_ack = 0;
+        }else if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
         {
+            // our_dprintf("NETWORK_DATA event\n");
+            char recv_buf[sizeof(struct tcphdr) + STCP_MSS];
+            struct tcphdr* recv_hdr = (struct tcphdr*) recv_buf;
+            ssize_t recv_len = stcp_network_recv(sd, recv_buf, sizeof(recv_buf)); // network layer 로 부터 데이터를받아옴
+            
+            if(recv_len < sizeof(struct tcphdr)) continue; // 헤더 크기보다 작으면 패스
+
+            //헤더 파싱
+            size_t header_len = recv_hdr->th_off * 4; // 헤더 길이
+            size_t payload_len = recv_len - header_len; // 페이로드 길이
+
+            char* payload = recv_buf + header_len; // 페이로드 시작 위치
+
+            tcp_seq recv_seqnum = ntohl(recv_hdr->th_seq); // 상대방 시퀀스 번호
+            tcp_seq recv_acknum = ntohl(recv_hdr->th_ack); // 상대방 ack 번호
+            uint8_t recv_flags = recv_hdr->th_flags; // 플래그
+
+            if ( recv_flags & TH_ACK ){
+                if ( recv_acknum > ctx->last_peer_ack ){ // 새로운 ack 이면 그걸로 갱신
+                    ctx->last_peer_ack = recv_acknum;
+                }
+                if ( ctx->connection_state == CSTATE_LAST_ACK && recv_acknum == ctx->myseqnum){ // server 가 fin 보낸 후에 ack 받은 경우
+                    ctx->connection_state = CSTATE_CLOSED; // state 변경
+                    ctx->done = TRUE; // 루프 탈출
+                }
+                if ( ctx->connection_state == CSTATE_FIN_WAIT_1 && recv_acknum == ctx->myseqnum ){
+                    ctx->connection_state = CSTATE_FIN_WAIT_2; // state 변경
+                }
+            }
+
+
+            if ( recv_flags & TH_FIN ){ // passive close + 그외 여러 귀찮은 경우 다 있음
+                stcp_fin_received( sd ); // app layer 에 fin 도착 알림
+                ctx->peerseqnum++;
+                
+                if( ctx->connection_state == CSTATE_ESTABLISHED ){ //server 가 fin 받은 경우
+                    send_ack( sd, ctx ); // ack 전송
+                    ctx->connection_state = CSTATE_CLOSE_WAIT; // state 변경
+                }
+                if( ctx->connection_state == CSTATE_FIN_WAIT_1 ){ // 클라이언트에서 fin 받은거임  이러면 둘다 보낼거 다보낸거니까 TIME_WAIT 로 바로 감.
+                    send_ack( sd, ctx ); // ack 전송
+                    ctx->connection_state = CSTATE_CLOSING; // state 변경
+                    ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
+                    ctx->done = TRUE; // 루프 탈출
+                }
+                if( ctx->connection_state == CSTATE_FIN_WAIT_2 ){
+                    send_ack( sd, ctx ); // ack 전송
+                    ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
+                    ctx->done = TRUE; // 루프 탈출
+                }
+            }
+
+            if ( payload_len > 0 ){ // data 인 경우
+                if ( recv_seqnum == ctx->peerseqnum ){
+                    stcp_app_send( sd, payload, payload_len); // app layer 로 데이터 보내고
+                    ctx->peerseqnum += payload_len; // 상대 seq num 업데이트
+
+                    // delayed ack
+                    ctx->ack_pending = TRUE;
+                    ctx->packets_since_ack++;
+                    if (ctx->packets_since_ack >= 2){ // 2개 이상 패킷 받았으면 바로 ack 보냄 하나 더 받은 경우임.
+                        send_ack( sd, ctx );
+                        ctx->ack_pending = FALSE;
+                        ctx->packets_since_ack = 0;
+                    }
+                }
+            }
+        }else if (event & APP_DATA) // 이벤트가 application layer 로 부터 온 데이터인 경우 -> data 를 보내야함
+        {
+            // our_dprintf("APP_DATA event\n");
             tcp_seq unacked_data = ctx->myseqnum - ctx->last_peer_ack;
             if ( unacked_data > WINDOWSIZE ) continue; // 윈도우 사이즈 초과하면 데이터 못 보냄
             uint32_t available_window = WINDOWSIZE - unacked_data;
@@ -292,77 +380,8 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
             /* see stcp_app_recv() */
             // stcp_app_recv(sd, NULL, 0); // app layer 로 부터 데이터를받아옴?
 
-        }
-
-        if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
-        {
-            char recv_buf[sizeof(struct tcphdr) + STCP_MSS];
-            struct tcphdr* recv_hdr = (struct tcphdr*) recv_buf;
-            ssize_t recv_len = stcp_network_recv(sd, recv_buf, sizeof(recv_buf)); // network layer 로 부터 데이터를받아옴
-            
-            if(recv_len < sizeof(struct tcphdr)) continue; // 헤더 크기보다 작으면 패스
-
-            //헤더 파싱
-            size_t header_len = recv_hdr->th_off * 4; // 헤더 길이
-            size_t payload_len = recv_len - header_len; // 페이로드 길이
-
-            char* payload = recv_buf + header_len; // 페이로드 시작 위치
-
-            tcp_seq recv_seqnum = ntohl(recv_hdr->th_seq); // 상대방 시퀀스 번호
-            tcp_seq recv_acknum = ntohl(recv_hdr->th_ack); // 상대방 ack 번호
-            uint8_t recv_flags = recv_hdr->th_flags; // 플래그
-
-
-            if ( recv_flags & TH_FIN ){ // passive close + 그외 여러 귀찮은 경우 다 있음
-                stcp_fin_received( sd ); // app layer 에 fin 도착 알림
-                ctx->peerseqnum++;
-                
-                if( ctx->connection_state == CSTATE_ESTABLISHED ){ //server 가 fin 받은 경우
-                    send_ack( sd, ctx ); // ack 전송
-                    ctx->connection_state = CSTATE_CLOSE_WAIT; // state 변경
-                }
-                if( ctx->connection_state == CSTATE_FIN_WAIT_1 ){ // 클라이언트에서 fin 받은거임  이러면 둘다 보낼거 다보낸거니까 TIME_WAIT 로 바로 감.
-                    send_ack( sd, ctx ); // ack 전송
-                    ctx->connection_state = CSTATE_CLOSING; // state 변경
-                    ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
-                    ctx->done = TRUE; // 루프 탈출
-                }
-                if( ctx->connection_state == CSTATE_FIN_WAIT_2 ){
-                    send_ack( sd, ctx ); // ack 전송
-                    ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
-                    ctx->done = TRUE; // 루프 탈출
-                }
-
-            }
-
-            if ( recv_flags & TH_ACK ){
-                if ( recv_acknum > ctx->last_peer_ack ){ // 새로운 ack 이면 그걸로 갱신
-                    ctx->last_peer_ack = recv_acknum;
-                }
-                if ( ctx->connection_state == CSTATE_LAST_ACK ){ // server 가 fin 보낸 후에 ack 받은 경우
-                    ctx->connection_state = CSTATE_CLOSED; // state 변경
-                    ctx->done = TRUE; // 루프 탈출
-                }
-            }
-
-            if ( payload_len > 0 ){ // data 인 경우
-                if ( recv_seqnum == ctx->peerseqnum ){
-                    stcp_app_send( sd, payload, payload_len); // app layer 로 데이터 보내고
-                    ctx->peerseqnum += payload_len; // 상대 seq num 업데이트
-
-                    // delayed ack
-                    ctx->ack_pending = TRUE;
-                    ctx->packets_since_ack++;
-                    if (ctx->packets_since_ack >= 2){ // 2개 이상 패킷 받았으면 바로 ack 보냄 하나 더 받은 경우임.
-                        send_ack( sd, ctx );
-                        ctx->ack_pending = FALSE;
-                        ctx->packets_since_ack = 0;
-                    }
-                }
-            }
-        }
-
-        if ( event & APP_CLOSE_REQUESTED ){ // active close
+        }else if ( event & APP_CLOSE_REQUESTED ){ // active close
+            // our_dprintf("APP_CLOSE_REQUESTED event\n");
             init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_FIN | TH_ACK ); // FIN + ACK 플래그 설정
             stcp_network_send( sd, send_hdr, sizeof( struct tcphdr), NULL); // FIN + ACK 패킷 전송
             ctx->myseqnum++; // 내 시퀀스 번호 업데이트
@@ -374,13 +393,6 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
                 ctx->connection_state = CSTATE_LAST_ACK; // state 변경
             }
         }
-
-        if ( event & TIMEOUT ){ // 타임 아웃 -> ack 슛
-            send_ack( sd, ctx );
-            ctx->ack_pending = FALSE;
-            ctx->packets_since_ack = 0;
-        }
-
     }
 }
 
