@@ -19,8 +19,6 @@
 #include "stcp_api.h"
 #include "transport.h"
 
-
-
 enum {
     CSTATE_LISTEN, // passive open
     CSTATE_SYN_SENT, // active open
@@ -284,7 +282,9 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
             send_ack( sd, ctx );
             ctx->ack_pending = FALSE;
             ctx->packets_since_ack = 0;
-        }else if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
+        }
+        
+        if ( event & NETWORK_DATA) // 이벤트가 network layer 로 부터 온 데이터인 경우 -> data 를 받아야함
         {
             // our_dprintf("NETWORK_DATA event\n");
             char recv_buf[sizeof(struct tcphdr) + STCP_MSS];
@@ -314,6 +314,10 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
                 if ( ctx->connection_state == CSTATE_FIN_WAIT_1 && recv_acknum == ctx->myseqnum ){
                     ctx->connection_state = CSTATE_FIN_WAIT_2; // state 변경
                 }
+                if ( ctx->connection_state == CSTATE_CLOSING && recv_acknum == ctx->myseqnum ){
+                    ctx->connection_state = CSTATE_TIME_WAIT;
+                    ctx->done = TRUE;
+                }
             }
 
 
@@ -328,8 +332,8 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
                 if( ctx->connection_state == CSTATE_FIN_WAIT_1 ){ // 클라이언트에서 fin 받은거임  이러면 둘다 보낼거 다보낸거니까 TIME_WAIT 로 바로 감.
                     send_ack( sd, ctx ); // ack 전송
                     ctx->connection_state = CSTATE_CLOSING; // state 변경
-                    ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
-                    ctx->done = TRUE; // 루프 탈출
+                    // ctx->connection_state = CSTATE_TIME_WAIT; // state 변경
+                    // ctx->done = TRUE; // 루프 탈출
                 }
                 if( ctx->connection_state == CSTATE_FIN_WAIT_2 ){
                     send_ack( sd, ctx ); // ack 전송
@@ -353,7 +357,9 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
                     }
                 }
             }
-        }else if (event & APP_DATA) // 이벤트가 application layer 로 부터 온 데이터인 경우 -> data 를 보내야함
+        }
+        
+        if (event & APP_DATA) // 이벤트가 application layer 로 부터 온 데이터인 경우 -> data 를 보내야함
         {
             // our_dprintf("APP_DATA event\n");
             tcp_seq unacked_data = ctx->myseqnum - ctx->last_peer_ack;
@@ -380,7 +386,8 @@ static void control_loop(mysocket_t sd, context_t *ctx) // transport_init 에서
             /* see stcp_app_recv() */
             // stcp_app_recv(sd, NULL, 0); // app layer 로 부터 데이터를받아옴?
 
-        }else if ( event & APP_CLOSE_REQUESTED ){ // active close
+        }
+        if ( event & APP_CLOSE_REQUESTED ){ // active close // app data 업을때 이벤트 발생하게 되어있음.
             // our_dprintf("APP_CLOSE_REQUESTED event\n");
             init_tcphdr( send_hdr, ctx->myseqnum, ctx->peerseqnum, TH_FIN | TH_ACK ); // FIN + ACK 플래그 설정
             stcp_network_send( sd, send_hdr, sizeof( struct tcphdr), NULL); // FIN + ACK 패킷 전송
