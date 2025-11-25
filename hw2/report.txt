@@ -1,0 +1,192 @@
+Client (내 컴퓨터): 192.168.219.118
+
+Server (Microsoft Outlook): 52.109.124.28 (https://www.google.com/url?sa=E&source=gmail&q=officeclient.microsoft.com)
+
+1. TCP 3-Way Handshake
+Outlook 클라이언트가 서버(Port 443)에 안전한 연결을 요청하는 과정
+
+Packet 135 (SYN):
+
+내용: Client → Server로 연결 요청을 보냅니다.
+
+분석: Flags: [SYN], Seq: 0. 클라이언트가 통신을 시작하겠다는 신호입니다.
+
+Packet 141 (SYN, ACK):
+
+내용: Server → Client로 요청을 수락합니다.
+
+분석: Flags: [SYN, ACK], Ack: 1. 서버가 클라이언트의 요청(Seq 0)을 잘 받았음(Ack 1)을 알립니다.
+
+Packet 142 (ACK):
+
+내용: Client → Server로 확인 응답을 보냅니다.
+
+분석: Flags: [ACK], Seq: 1. 이 시점에서 TCP 연결(Connection)이 성립(Established)됩니다.
+
+2. TLS 1.3 Handshake
+
+연결 수립 직후, 데이터를 암호화하기 위해 TLS 핸드셰이크가 진행됩니다. 여기서는 최신 프로토콜인 TLS 1.3이 사용되었습니다.
+
+Packet 144 (Client Hello):
+
+클라이언트가 "나 암호화 통신 하고 싶어, 내 스펙은 이래"라고 보냅니다.
+
+특이사항: SNI=officeclient.microsoft.com 필드를 통해 Outlook 서버에 접속함을 명확히 알 수 있습니다.
+
+Packet 150 (Hello Retry Request):
+
+중요 포인트: 서버가 바로 "Server Hello"를 보내지 않고 "다시 요청해(Retry Request)"를 보냈습니다.
+
+해석: 이는 TLS 1.3의 특징 중 하나로, 클라이언트가 처음에 제안한 보안 키 교환 방식이 서버 마음에 들지 않아, "다른 방식으로 다시 보내줘"라고 요청하는 과정입니다. 보고서에 적기 아주 좋은 포인트입니다.
+
+Packet 152 (Client Hello):
+
+클라이언트가 서버의 요구에 맞춰 다시 "Client Hello"를 보냅니다.
+
+Packet 160 (Server Hello):
+
+서버가 수락하고 암호화 통신이 시작됩니다.
+
+3. 이후 데이터 통신
+
+No. 160 (Server Hello) 이후에
+
+Application Data 패킷들을 주고 받고 있음.
+
+Packet 164, 176 (Server → Client): 서버로부터 데이터를 수신하는 과정입니다. 패킷 길이가 650 bytes 등으로 나타나며, 이는 암호화된 메일 내용이나 동기화 데이터로 추정됩니다.
+
+Packet 167 (Client → Server): 사용자가 서버로 데이터를 보내는 과정입니다.
+
+결론: 패킷의 내용은 TLS로 암호화되어 Application Data로만 표시되지만, 이를 통해 Outlook 앱이 서버와 지속적으로 데이터를 주고받으며 동기화(Sync)를 수행함을 확인할 수 있습니다.
+
+---
+
+1. 트래픽 흐름 요약 (Web Browsing Analysis)
+Target Website: example.com
+
+Client IP: 192.168.219.118
+
+Server IP: 23.192.228.80 (DNS 조회를 통해 획득)
+
+Protocol: DNS, TCP, HTTP
+
+2. 상세 패킷 분석 (보고서 작성용)
+보고서의 'Web Browsing' 섹션에 아래 순서대로 스크린샷과 설명을 작성하세요.
+
+Step 1: DNS 조회 (Domain Name System)
+브라우저가 example.com의 IP 주소를 알아내는 과정입니다.
+
+Packet 1005 (Standard query A example.com):
+
+내용: Client가 DNS 서버(1.214.68.2)에게 "example.com의 IP가 뭐야?"라고 묻습니다.
+
+Packet 1011 (Standard query response):
+
+내용: DNS 서버가 "IP는 23.192.228.80이야"라고 응답합니다. (여러 IP 중 하나)
+
+분석: 이 응답을 받은 직후, 해당 IP로 TCP 연결을 시도하는 것을 볼 수 있습니다.
+
+Step 2: TCP 3-Way Handshake (연결 수립)
+알아낸 서버 IP(23.192.228.80)의 80번 포트(HTTP)로 연결을 맺습니다.
+
+Packet 1015 (SYN): Client → Server 연결 요청 (Seq=0).
+
+Packet 1070 (SYN, ACK): Server → Client 요청 수락 (Ack=1).
+
+Tip: 여기서 시간차(약 0.16초)가 발생하는데, 이것이 바로 서버와의 왕복 지연 시간(RTT)입니다.
+
+Packet 1071 (ACK): Client → Server 확인 (Seq=1). 연결이 성립(Established)됩니다.
+
+Step 3: HTTP 요청 및 응답 (Application Layer)
+Packet 1072 (GET /favicon.ico HTTP/1.1):
+
+내용: Client가 웹사이트의 아이콘 파일(favicon.ico)을 요청합니다.
+
+분석: 브라우저 탭에 표시되는 작은 아이콘을 가져오기 위한 표준적인 요청입니다.
+
+Packet 1102 (HTTP/1.1 404 Not Found):
+
+내용: Server가 "요청한 아이콘 파일이 내 서버에 없어"라고 응답합니다.
+
+분석: 404 Not Found는 클라이언트의 요청은 도달했으나 해당 리소스가 없을 때 발생하는 표준 HTTP 상태 코드입니다. 에러가 났다고 해서 감점이 아니며, 오히려 **"HTTP 상태 코드를 통해 서버의 상황을 확인했다"**라고 분석하면 훌륭한 포인트가 됩니다.
+
+3. 보고서 Discussion 추천 멘트
+"이번 실험에서는 브라우저가 example.com에 접속할 때 DNS를 통해 IP를 획득하고, TCP 3-Way Handshake를 거쳐 HTTP 통신을 하는 전체 과정을 확인했습니다. 특이점은 메인 콘텐츠 대신 /favicon.ico를 요청하여 404 Not Found 응답을 받았다는 점인데, 이는 실제 웹 환경에서 빈번하게 일어나는 리소스 누락이나 캐싱 동작의 일면을 보여줍니다."
+
+1. Browser Cache Hit (브라우저 캐시): "보이지 않는 것이 증거"
+Wireshark는 네트워크 선을 타고 오가는 데이터만 잡습니다. 만약 브라우저가 "어? 이 페이지(example.com)는 아까 접속했으니까 내 컴퓨터(캐시)에 저장된 걸 보여줘야지"라고 판단하면, 서버로 요청을 아예 보내지 않습니다.
+
+증거: 파일에 GET / (메인 홈페이지인 index.html 요청) 패킷이 전혀 없습니다.
+
+해석: 사용자가 example.com을 입력했지만, 브라우저가 내부 캐시를 사용했기 때문에 네트워크 트래픽이 발생하지 않았습니다. 즉, 메인 페이지는 Browser Cache Hit입니다.
+
+2. Server Cache Miss (서버 캐시): "404 Not Found"
+반면, favicon.ico(아이콘)는 브라우저 캐시에 없어서 서버로 직접 요청을 보냈고, 서버의 응답을 받았습니다.
+
+위치: Packet 1102 (HTTP/1.1 404 Not Found)
+
+설명: 서버가 "찾아봤는데 없더라"라고 응답했습니다. 만약 CDN이나 프록시 서버(예: Varnish, Nginx 등)를 거쳤다면 HTTP 헤더(Wireshark 하단 패킷 상세 창)에 X-Cache: MISS 같은 문구가 있을 수 있습니다. 하지만 현재 CSV 파일(리스트 뷰)에서는 헤더 내부까지는 안 보이고 결과(404)만 확인됩니다.
+
+보고서 작성 팁: Wireshark 원본 화면에서 Packet 1102를 클릭하고 아래 Hypertext Transfer Protocol 부분을 열어보세요. Via, X-Cache, Age 같은 헤더가 있다면 서버 측 캐시 상태를 더 정확히 알 수 있습니다.
+
+3. 정리 (보고서용)
+보고서의 'Web Browsing' 파트에서 이 부분을 이렇게 서술하면 매우 훌륭한 분석이 됩니다.
+
+[분석 포인트: 캐싱 동작]
+
+메인 페이지(HTML): Wireshark 캡처 내에 GET / 요청이 부재함. 이는 브라우저가 로컬 캐시된 데이터를 사용하여 불필요한 네트워크 트래픽을 발생시키지 않았음(Browser Cache Hit)을 시사함.
+
+리소스(Favicon): 캐시에 없는 favicon.ico에 대해서만 실제 TCP/HTTP 요청이 발생했음.
+
+
+---
+
+1. 트래픽 개요 (Analysis Overview)
+Application: KakaoTalk (Instant Messaging)
+
+Client IP: 192.168.219.118
+
+Messaging Server: talk-pilsner.kakao.com (IP: 121.53.203.203)
+
+발견 근거: Packet 233, 242번 DNS 쿼리를 통해 해당 도메인이 카카오톡 메시징 서버임을 확인했습니다.
+
+Protocol: TCP, TLSv1.3 (Secure Socket)
+
+2. 상세 패킷 분석 (보고서 작성 가이드)
+보고서의 'Instant Messaging' 섹션에 아래 순서대로 스크린샷과 설명을 넣으세요.
+
+Step 1: 메신저 서버 식별 (DNS & Connection)
+카카오톡이 어떤 서버와 통신하는지 찾아내는 과정입니다.
+
+Packet 233 (DNS Query): 클라이언트가 talk-pilsner.kakao.com의 IP를 물어봅니다.
+
+Packet 242 (DNS Response): DNS 서버가 IP 121.53.203.203을 알려줍니다.
+
+Packet 244 (TCP SYN): 알아낸 IP(203.203)의 443 포트로 연결을 시도합니다.
+
+Step 2: 보안 연결 수립 (TLS 1.3 Handshake)
+메시지 내용을 보호하기 위해 암호화 연결을 맺습니다.
+
+Packet 251 (Client Hello):
+
+분석: SNI=talk-pilsner.kakao.com 필드를 통해 카카오톡 서버로의 접속임을 재확인할 수 있습니다.
+
+Packet 257 (Server Hello): 서버가 응답하며 암호화된 세션이 시작됩니다.
+
+Step 3: 메시지 송수신 (Message Exchange)
+암호화된 상태라 내용은 볼 수 없지만, 패킷의 방향과 크기로 "보냄"과 "받음"을 구분할 수 있습니다.
+
+메시지 전송 (User Sending):
+
+Packet 263: Length=689 bytes. 클라이언트(192...) → 서버(121...)로 데이터를 보냅니다. (로그인 정보나 메시지 전송 추정)
+
+Packet 271: Length=97 bytes. 짧은 텍스트 메시지나 상태 업데이트로 보입니다.
+
+메시지 수신 (User Receiving):
+
+Packet 269: Length=565 bytes. 서버 → 클라이언트로 데이터가 들어옵니다.
+
+Packet 323, 327...: Length=1514 (Max Size). 서버로부터 대량의 데이터가 연속으로 들어옵니다. 이는 채팅방 목록 동기화나 이미지/이모티콘 다운로드일 가능성이 큽니다.
+
+3. 보고서 Discussion (심화 분석 멘트)
+"카카오톡은 talk-pilsner라는 별도의 메시징 도메인을 사용하며, 최신 TLS 1.3 프로토콜을 적용하여 보안성을 강화하고 있습니다. 특이점은 연결 초기(Packet 323~)에 서버로부터 MTU(1514 bytes)를 꽉 채운 패킷이 다수 유입되는데, 이는 로그인 직후 밀린 메시지나 친구 목록을 동기화(Sync)하는 과정으로 해석됩니다."
